@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mario-Forge — Input Debug (WO-003)</title>
+  <style>
+    /* Debug-only page for WO-003 manual QA. The real single-file artifact
+       is built in WO-001 / WO-028. */
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    h1 { margin: 0 0 8px; font-size: 16px; color: #8fd; }
+    p { color: #999; }
+    .actions { display: grid; grid-template-columns: 160px 80px 100px 100px; gap: 4px 12px; margin-top: 12px; }
+    .actions span { padding: 2px 6px; }
+    .on { background: #2c5; color: #000; font-weight: bold; border-radius: 3px; }
+    .off { color: #555; }
+    .hint { color: #888; font-size: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Mario-Forge — Input Debug (WO-003)</h1>
+  <p>Press Arrow keys / WASD / Space / Shift / P / M / Enter. ArrowLeft + Space should NOT scroll the page (AC4).</p>
+
+  <div id="actions" class="actions"></div>
+
+  <div class="hint">
+    The justPressed column lights up for exactly one frame after each press.
+    "frame" here = one requestAnimationFrame tick.
+  </div>
+
+  <script src="src/input.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      const ACTIONS = ['moveLeft','moveRight','moveUp','moveDown','jump','run','pause','mute','confirm'];
+      const container = document.getElementById('actions');
+
+      // header
+      ['Action','Held','JustPressed','JustReleased'].forEach((t) => {
+        const h = document.createElement('span');
+        h.style.color = '#8fd';
+        h.textContent = t;
+        container.appendChild(h);
+      });
+
+      const cells = {};
+      ACTIONS.forEach((a) => {
+        const label = document.createElement('span');
+        label.textContent = a;
+        container.appendChild(label);
+        cells[a] = { held: cell(), pressed: cell(), released: cell() };
+        container.appendChild(cells[a].held);
+        container.appendChild(cells[a].pressed);
+        container.appendChild(cells[a].released);
+      });
+      function cell() {
+        const s = document.createElement('span');
+        s.className = 'off';
+        s.textContent = '—';
+        return s;
+      }
+
+      const input = window.InputModule.createInput({});
+
+      function tick() {
+        ACTIONS.forEach((a) => {
+          paint(cells[a].held, input.isHeld(a));
+          paint(cells[a].pressed, input.justPressed(a));
+          paint(cells[a].released, input.justReleased(a));
+        });
+        input.update();
+        requestAnimationFrame(tick);
+      }
+      function paint(el, on) {
+        el.className = on ? 'on' : 'off';
+        el.textContent = on ? 'ON' : '—';
+      }
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>
