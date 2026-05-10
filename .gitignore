@@ -1,0 +1,8 @@
+.forge-commit-ready
+.claude/hooks/
+
+# Local security-scan artifacts (gitleaks/grype/semgrep/checkov/hadolint/npm-audit/etc.)
+*-report.json
+*-stderr.txt
+npm-audit.json
+precommit-scan-*.md
