@@ -1,0 +1,9 @@
+{
+  "name": "mario-forge",
+  "version": "0.1.0",
+  "description": "Retro pixel platformer (single-file HTML).",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"tests/collision.test.js\""
+  }
+}
