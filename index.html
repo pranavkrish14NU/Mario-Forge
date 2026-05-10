@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <title>Mario-Forge</title>
+  <style>
+    /* Minimal shell only — full responsive layout is owned by WO-020.
+       Single-file inlining of scripts is deferred to WO-001 / WO-028 per RTM.
+       This shell exists so WO-002 acceptance criteria 3 & 4 can be demoed
+       interactively in a browser. */
+    html, body { margin: 0; padding: 0; background: #000; color: #fff; height: 100%; }
+    body { display: flex; align-items: center; justify-content: center; font-family: monospace; }
+    canvas#game {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      width: 640px;
+      height: 360px;
+      background: #000;
+      outline: 1px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="320" height="180" aria-label="Mario-Forge game canvas"></canvas>
+
+  <script src="src/state-manager.js"></script>
+  <script src="src/scenes.js"></script>
+  <script src="src/input.js"></script>
+  <script src="src/game.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+
+      const stateManager = window.StateManagerFactory.createStateManager({
+        allowedTransitions: window.Scenes.DEFAULT_TRANSITIONS,
+      });
+
+      const scenes = window.Scenes.createPlaceholderScenes({
+        width: canvas.width,
+        height: canvas.height,
+      });
+      Object.keys(scenes).forEach(function (name) {
+        stateManager.registerScene(name, scenes[name]);
+      });
+
+      window.InputModule.createInputHandler({ stateManager: stateManager });
+
+      stateManager.changeScene('title');
+
+      const game = window.GameModule.createGame({ stateManager: stateManager, ctx: ctx });
+      game.start();
+    })();
+  </script>
+</body>
+</html>
