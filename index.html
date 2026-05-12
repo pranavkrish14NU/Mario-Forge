@@ -10,12 +10,19 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       font-family: monospace;
     }
+    /* Sized at runtime by ViewportModule (WO-020). The CSS image-rendering
+       declarations stay here so the property is set BEFORE the first paint
+       and is never overwritten by intermediate JS. The body's black
+       background provides the letterbox / pillarbox bars around the
+       aspect-ratio-preserving display rect. */
     canvas#game {
       image-rendering: pixelated;
       image-rendering: crisp-edges;
-      width: 768px; height: 416px;
       background: #5cd;
       outline: 1px solid #333;
+      /* Fallback size if JS scaling is unavailable — keeps the game playable
+         without ViewportModule. */
+      width: 768px; height: 416px;
     }
     .hud { margin-top: 8px; color: #aaa; font-size: 12px; }
     .hud b { color: #fff; }
@@ -42,6 +49,7 @@
   <script src="src/renderer.js"></script>
   <script src="src/levels.js"></script>
   <script src="src/screens.js"></script>
+  <script src="src/viewport.js"></script>
   <script src="src/game.js"></script>
   <script>
     (function () {
@@ -49,6 +57,17 @@
 
       const canvas = document.getElementById('game');
       const ctx = canvas.getContext('2d');
+
+      // Responsive canvas scaling (WO-020). Attach BEFORE any other module
+      // so the first paint already has the correct display size on mobile.
+      // The viewport overrides the CSS-fallback width/height and re-runs on
+      // every resize / orientationchange.
+      const viewport = window.ViewportModule.createViewport({
+        canvas: canvas,
+        internalWidth: canvas.width,
+        internalHeight: canvas.height,
+        preferInteger: true,
+      });
 
       // --- module wiring ---
       const input = window.InputModule.createInput({});
