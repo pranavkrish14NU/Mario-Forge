@@ -58,7 +58,7 @@
     title: ['playing'],
     playing: ['paused', 'gameOver', 'victory', 'levelTransition'],
     paused: ['playing', 'title'],
-    levelTransition: ['playing'],
+    levelTransition: ['playing', 'victory'],
     gameOver: ['title'],
     victory: ['title'],
   });

@@ -328,6 +328,9 @@
       for (let i = 0; i < pool.length; i++) {
         const e = pool[i];
         if (!e.active) continue;
+        // Defeated enemies hold position while Combat plays their squish
+        // animation and despawns them.
+        if (e.defeated) continue;
         if (vw > 0 && !inWakeBand(e, camOffX, vw)) continue;
         if (e.type === TYPE_FLYING) updateFlying(e);
         else updateGround(e);

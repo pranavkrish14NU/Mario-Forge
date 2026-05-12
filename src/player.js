@@ -369,10 +369,45 @@
     }
   }
 
+  // Powered-up draw: scales each source pixel up by 1.5× into a 24×24
+  // envelope. Fractional positions are rounded so the chunky scale-up looks
+  // intentional rather than blurred. A thin red outline overlay marks the
+  // powered state as visually distinct from the normal sprite (WO-013 AC7).
+  function drawPlayerPowered(ctx, frame, dx, dy, facing) {
+    const flip = facing === 'left';
+    const dest = 24;
+    // Background outline ring — drawn before the sprite so it sits behind.
+    ctx.fillStyle = '#d23';
+    ctx.fillRect(dx, dy, dest, 1);
+    ctx.fillRect(dx, dy + dest - 1, dest, 1);
+    ctx.fillRect(dx, dy, 1, dest);
+    ctx.fillRect(dx + dest - 1, dy, 1, dest);
+    for (let py = 0; py < 16; py++) {
+      for (let px = 0; px < 16; px++) {
+        const idx = frame[py * 16 + px];
+        if (idx === 0) continue;
+        const color = PALETTE[idx] || '#f0f';
+        const sx = flip ? 15 - px : px;
+        const screenX = Math.round(sx * 1.5);
+        const screenY = Math.round(py * 1.5);
+        const screenW = Math.round((sx + 1) * 1.5) - screenX;
+        const screenH = Math.round((py + 1) * 1.5) - screenY;
+        ctx.fillStyle = color;
+        ctx.fillRect(dx + screenX, dy + screenY, screenW, screenH);
+      }
+    }
+  }
+
   function drawPlayer(ctx, player) {
     const frames = PLAYER_SPRITES[player.animState] || PLAYER_SPRITES.idle;
     const frame = frames[player.animFrame] || frames[0];
-    drawSprite(ctx, frame, Math.round(player.x), Math.round(player.y), player.facing);
+    const dx = Math.round(player.x);
+    const dy = Math.round(player.y);
+    if (player.powered) {
+      drawPlayerPowered(ctx, frame, dx, dy, player.facing);
+      return;
+    }
+    drawSprite(ctx, frame, dx, dy, player.facing);
   }
 
   const api = {
