@@ -35,6 +35,7 @@
   <script src="src/player.js"></script>
   <script src="src/tilemap.js"></script>
   <script src="src/camera.js"></script>
+  <script src="src/enemy.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/game.js"></script>
   <script>
@@ -55,6 +56,8 @@
         level: { pixelWidth: tilemap.pixelWidth, pixelHeight: tilemap.pixelHeight },
         initial: { x: 0, y: 0 },
       });
+      const enemies = window.EnemyModule.createEnemyPool({ tilemap: tilemap });
+      enemies.spawnAllFromTilemap(tilemap);
       // Two parallax background layers stacked behind the foreground.
       const skyBlue = '#5cd';
       const renderer = window.RendererModule.createRenderer({
@@ -134,10 +137,15 @@
             x: player.x, y: player.y, width: player.w, height: player.h,
             onGround: player.onGround,
           });
+          enemies.update({
+            cameraOffset: camera.getOffset(),
+            viewport: { width: canvas.width, height: canvas.height },
+          });
         },
         render: function () {
           renderer.render({
             player: player,
+            entities: enemies.getActive(),
             hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
           });
         },
