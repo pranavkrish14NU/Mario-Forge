@@ -268,3 +268,67 @@ test('multiple held keys map to independent actions', () => {
   assert.equal(input.isHeld('jump'), false);
   assert.equal(input.isHeld('run'), true);
 });
+
+// =============================================================================
+// virtualPress / virtualRelease (WO-019 — shared input buffer for touch/gamepad)
+// =============================================================================
+
+test('virtualPress adds to heldActions + justPressedActions', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  input.virtualPress('jump');
+  assert.equal(input.isHeld('jump'), true);
+  assert.equal(input.justPressed('jump'), true);
+});
+
+test('virtualRelease removes from heldActions and fires justReleased', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  input.virtualPress('jump');
+  input.update(); // clear justPressed
+  input.virtualRelease('jump');
+  assert.equal(input.isHeld('jump'), false);
+  assert.equal(input.justReleased('jump'), true);
+});
+
+test('virtualPress is idempotent — double-press does not re-fire justPressed', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  input.virtualPress('moveLeft');
+  input.update();
+  input.virtualPress('moveLeft'); // second press while still held
+  assert.equal(input.isHeld('moveLeft'), true);
+  assert.equal(input.justPressed('moveLeft'), false);
+});
+
+test('virtualRelease on non-held action is a no-op', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  input.virtualRelease('jump'); // never pressed
+  assert.equal(input.isHeld('jump'), false);
+  assert.equal(input.justReleased('jump'), false);
+});
+
+test('virtualPress and keyboard press share the same buffer', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  press(t, 'ArrowLeft'); // physical keyboard → moveLeft
+  assert.equal(input.isHeld('moveLeft'), true);
+  // Touch tries to also press the same action while keyboard held — must
+  // stay held (no double-add), and justPressed must NOT re-fire.
+  input.update();
+  input.virtualPress('moveLeft');
+  assert.equal(input.isHeld('moveLeft'), true);
+  assert.equal(input.justPressed('moveLeft'), false);
+});
+
+test('virtualPress rejects non-string / empty action names', () => {
+  const t = makeEventTarget();
+  const input = createInput({ target: t });
+  input.virtualPress(null);
+  input.virtualPress('');
+  input.virtualPress(123);
+  input.virtualRelease(null);
+  // No state should have changed.
+  assert.equal(input.isHeld('jump'), false);
+});

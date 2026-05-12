@@ -111,11 +111,32 @@
     target.addEventListener('keyup', onKeyUp);
     target.addEventListener('blur', onBlur);
 
+    // Virtual press/release used by non-keyboard input sources (WO-019 touch,
+    // future WO-024 gamepad). Hits the same heldActions / justPressed sets as
+    // physical keys so all downstream consumers see a single unified buffer.
+    // Idempotent — pressing an already-held action does NOT re-fire
+    // justPressed; releasing a non-held action is a no-op.
+    function virtualPress(action) {
+      if (typeof action !== 'string' || !action) return;
+      if (heldActions.has(action)) return;
+      heldActions.add(action);
+      justPressedActions.add(action);
+    }
+
+    function virtualRelease(action) {
+      if (typeof action !== 'string' || !action) return;
+      if (!heldActions.has(action)) return;
+      heldActions.delete(action);
+      justReleasedActions.add(action);
+    }
+
     return {
       update: function () {
         justPressedActions.clear();
         justReleasedActions.clear();
       },
+      virtualPress: virtualPress,
+      virtualRelease: virtualRelease,
       isHeld: function (action) {
         return heldActions.has(action);
       },
