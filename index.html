@@ -40,6 +40,7 @@
   <script src="src/hazards.js"></script>
   <script src="src/combat.js"></script>
   <script src="src/renderer.js"></script>
+  <script src="src/screens.js"></script>
   <script src="src/game.js"></script>
   <script>
     (function () {
@@ -175,17 +176,58 @@
         },
       };
 
-      stateManager.registerScene('title', placeholders.title);
+      // Map 'R' to a custom 'restart' action used by the pause screen.
+      input.remap('r', 'restart');
+      input.remap('R', 'restart');
+
+      // Game-state holder (start time, etc.) — referenced by victory screen.
+      const gameState = { startTimeMs: 0, score: 0 };
+      function resetGameWorld() {
+        player.x = 32; player.y = 100;
+        player.vx = 0; player.vy = 0; player.lives = 3; player.score = 0;
+        player.powered = false; player.w = 16; player.h = 16; player.visible = true;
+        combat.reset();
+        gameState.startTimeMs = Date.now();
+      }
+
+      // WO-015 screens — replace the placeholder scenes from WO-002.
+      const titleScene = window.ScreensModule.createTitleScreen({
+        width: canvas.width, height: canvas.height,
+        input: input,
+        transitions: { onStart: function () { resetGameWorld(); stateManager.changeScene('playing'); } },
+      });
+      const pauseScene = window.ScreensModule.createPauseScreen({
+        width: canvas.width, height: canvas.height,
+        input: input,
+        getUnderlay: function () { return playingScene; },
+        transitions: {
+          onResume: function () { stateManager.changeScene('playing'); },
+          onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); },
+        },
+      });
+      const gameOverScene = window.ScreensModule.createGameOverScreen({
+        width: canvas.width, height: canvas.height,
+        input: input,
+        getScore: function () { return player.score; },
+        transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
+      });
+      const victoryScene = window.ScreensModule.createVictoryScreen({
+        width: canvas.width, height: canvas.height,
+        input: input,
+        getScore: function () { return player.score; },
+        getTime: function () { return (Date.now() - gameState.startTimeMs) / 1000; },
+        transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
+      });
+
+      stateManager.registerScene('title', titleScene);
       stateManager.registerScene('playing', playingScene);
-      stateManager.registerScene('paused', placeholders.paused);
-      stateManager.registerScene('gameOver', placeholders.gameOver);
-      stateManager.registerScene('victory', placeholders.victory);
+      stateManager.registerScene('paused', pauseScene);
+      stateManager.registerScene('gameOver', gameOverScene);
+      stateManager.registerScene('victory', victoryScene);
       stateManager.registerScene('levelTransition', placeholders.levelTransition);
 
       stateManager.changeScene('title');
 
-      // Custom loop: ordering matters — scene reads input, then input.update()
-      // rolls off justPressed/justReleased so the next frame sees a clean slate.
       var lastTime = 0;
       function frame(t) {
         var dt = lastTime ? (t - lastTime) / 1000 : 0;
@@ -196,14 +238,9 @@
         requestAnimationFrame(frame);
       }
 
-      // Top-level menu transitions (scene-level input handling isn't
-      // formalized in this spike — the Input module handles in-game keys).
+      // Top-level pause toggle — P always switches between playing/paused.
       window.addEventListener('keydown', function (e) {
         var cur = stateManager.getCurrentSceneName();
-        if (e.key === 'Enter') {
-          if (cur === 'title') stateManager.changeScene('playing');
-          else if (cur === 'gameOver' || cur === 'victory') stateManager.changeScene('title');
-        }
         if (e.key === 'p' || e.key === 'P') {
           if (cur === 'playing') stateManager.changeScene('paused');
           else if (cur === 'paused') stateManager.changeScene('playing');
