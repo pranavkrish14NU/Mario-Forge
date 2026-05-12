@@ -36,6 +36,7 @@
   <script src="src/tilemap.js"></script>
   <script src="src/camera.js"></script>
   <script src="src/enemy.js"></script>
+  <script src="src/items.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/game.js"></script>
   <script>
@@ -58,6 +59,10 @@
       });
       const enemies = window.EnemyModule.createEnemyPool({ tilemap: tilemap });
       enemies.spawnAllFromTilemap(tilemap);
+      const items = window.ItemsModule.createItems({ tileSize: 16 });
+      items.spawnAllFromTilemap(tilemap);
+      // Compose mystery-block solidity with the static tilemap.
+      const combinedTileAt = items.combineTileQuery(tilemap);
       // Two parallax background layers stacked behind the foreground.
       const skyBlue = '#5cd';
       const renderer = window.RendererModule.createRenderer({
@@ -122,9 +127,10 @@
           playerCtl.update(player);
           player.vy += GRAVITY;
           if (player.vy > TERMINAL_VY) player.vy = TERMINAL_VY;
-          collision.step(player, tilemap.tileAt, {
+          collision.step(player, combinedTileAt, {
             onLand: function () { /* sound stub */ },
             onWall: function () { /* sound stub */ },
+            onCeiling: function (entity, info) { items.onCeilingHit(entity, info); },
           });
           // Falling off the map — placeholder for death/respawn (WO-017).
           if (player.y > tilemap.pixelHeight) {
@@ -141,11 +147,12 @@
             cameraOffset: camera.getOffset(),
             viewport: { width: canvas.width, height: canvas.height },
           });
+          items.update({ player: player });
         },
         render: function () {
           renderer.render({
             player: player,
-            entities: enemies.getActive(),
+            entities: enemies.getActive().concat(items.getActive()),
             hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
           });
         },
