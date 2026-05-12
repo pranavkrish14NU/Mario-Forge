@@ -257,7 +257,7 @@
       walkMaxSpeed: 3,
       runMaxSpeed: 4.5,
       jumpVelocity: 12,
-      animFrameInterval: 6,
+      animFrameInterval: 7,
     }, config.options || {});
 
     // Internal controller state — separate from the entity so the entity

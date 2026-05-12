@@ -34,6 +34,8 @@
   <script src="src/collision.js"></script>
   <script src="src/player.js"></script>
   <script src="src/tilemap.js"></script>
+  <script src="src/camera.js"></script>
+  <script src="src/renderer.js"></script>
   <script src="src/game.js"></script>
   <script>
     (function () {
@@ -48,6 +50,46 @@
       const tilemap = window.TilemapModule.createTilemap({ tileSize: 16 });
       const player = window.PlayerModule.createPlayer({ x: 32, y: 100 });
       const playerCtl = window.PlayerModule.createPlayerController({ input: input });
+      const camera = window.CameraModule.createCamera({
+        viewport: { width: canvas.width, height: canvas.height },
+        level: { pixelWidth: tilemap.pixelWidth, pixelHeight: tilemap.pixelHeight },
+        initial: { x: 0, y: 0 },
+      });
+      // Two parallax background layers stacked behind the foreground.
+      const skyBlue = '#5cd';
+      const renderer = window.RendererModule.createRenderer({
+        ctx: ctx,
+        viewport: { width: canvas.width, height: canvas.height },
+        camera: camera,
+        tilemap: tilemap,
+        backgrounds: [
+          // Locked sky.
+          { factor: 0, color: skyBlue },
+          // Distant hills (factor 0.3) — scrolls slowly.
+          {
+            factor: 0.3,
+            draw: function (c, off) {
+              c.fillStyle = '#7a8';
+              for (var i = -1; i < 9; i++) {
+                var cx = i * 64 - (off.x % 64);
+                c.beginPath && c.beginPath();
+                c.fillRect(cx, canvas.height - 80, 64, 40);
+              }
+            },
+          },
+          // Mid-ground hills (factor 0.6) — scrolls faster.
+          {
+            factor: 0.6,
+            draw: function (c, off) {
+              c.fillStyle = '#5a7';
+              for (var i = -1; i < 9; i++) {
+                var cx = i * 96 - (off.x % 96);
+                c.fillRect(cx, canvas.height - 56, 96, 24);
+              }
+            },
+          },
+        ],
+      });
 
       // Light gravity used inside the playing scene (the standalone Physics
       // module is unit-tested separately; the integration spike uses a tiny
@@ -70,6 +112,7 @@
           player.x = 32; player.y = 100;
           player.vx = 0; player.vy = 0;
           player.onGround = false;
+          camera.snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
         },
         exit: function () { console.log('[Scene] exit: playing'); },
         update: function () {
@@ -85,16 +128,18 @@
             player.x = 32; player.y = 100;
             player.vx = 0; player.vy = 0;
             player.lives = Math.max(0, player.lives - 1);
+            camera.snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
           }
+          camera.update({
+            x: player.x, y: player.y, width: player.w, height: player.h,
+            onGround: player.onGround,
+          });
         },
-        render: function (ctx) {
-          ctx.fillStyle = '#5cd';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          tilemap.draw(ctx);
-          window.PlayerModule.drawPlayer(ctx, player);
-          ctx.fillStyle = '#fff';
-          if ('font' in ctx) ctx.font = '10px monospace';
-          ctx.fillText('LIVES: ' + player.lives + '  SCORE: ' + player.score, 4, 12);
+        render: function () {
+          renderer.render({
+            player: player,
+            hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
+          });
         },
       };
 
