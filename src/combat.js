@@ -85,7 +85,20 @@
       if (hooks && hooks.onStomp) hooks.onStomp(player, enemy);
     }
 
-    function applyDamage(player, hooks) {
+    function applyDamage(player, hooks, items) {
+      // Powered-up absorbs the first hit (WO-013, REQ-011 AC5): the player
+      // reverts to normal size, briefly becomes invincible, but does NOT
+      // lose a life. The shrink itself is owned by Items so the bounding
+      // box stays in sync with the sprite size.
+      if (player.powered && items && typeof items.removePowerup === 'function') {
+        items.removePowerup(player);
+        player.vy = -cfg.damageBounceVelocity;
+        state.invincibilityTimer = cfg.invincibilityFrames;
+        state.flashCounter = 0;
+        player.visible = true;
+        if (hooks && hooks.onPowerdown) hooks.onPowerdown(player);
+        return;
+      }
       player.lives = Math.max(0, (player.lives || 0) - 1);
       player.vy = -cfg.damageBounceVelocity;
       state.invincibilityTimer = cfg.invincibilityFrames;
@@ -151,7 +164,7 @@
           if (detectStomp(player, e)) {
             applyStomp(player, e, pool, c.hooks);
           } else if (!isInvincible()) {
-            applyDamage(player, c.hooks);
+            applyDamage(player, c.hooks, c.items);
           }
         }
       }

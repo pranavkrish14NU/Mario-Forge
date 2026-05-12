@@ -28,25 +28,35 @@
 
   const TYPE_COIN = 'coin';
   const TYPE_MYSTERY = 'mystery';
+  const TYPE_POWERUP = 'powerup';
   const SPAWN_CHAR_COIN = 'c';
   const SPAWN_CHAR_MYSTERY = 'M';
 
   const DEFAULTS = Object.freeze({
     coinCapacity: 80,
     mysteryCapacity: 16,
+    powerupCapacity: 8,
     tileSize: 16,
     coinScore: 100,
     coinFrameInterval: 6,        // ≈ 10 FPS spin
     mysteryFrameInterval: 10,    // gentle pulse
     popupRiseSpeed: 2.0,         // px / frame, popup coin moves up
-    popupLifetimeFrames: 24,     // collected automatically after this
+    popupLifetimeFrames: 24,     // auto-collected after this
+    powerupRiseSpeed: 1.0,       // float upward briefly before collectible
+    powerupFloatFrames: 18,      // not yet collectible during this window
+    powerupAnimInterval: 8,      // pulse
+    mysteryHitInterval: 3,       // every Nth mystery hit yields a power-up
+    poweredSize: 24,             // grown bounding box (1.5× of 16)
+    normalSize: 16,
   });
 
   // --------------------------------------------------------------------------
   // Sprite data
   // --------------------------------------------------------------------------
-  const PALETTE = ['transparent', '#1a0e07', '#fff', '#fc3', '#a82', '#fa3', '#852', '#fff7c0'];
-  const CHAR_MAP = { '.': 0, K: 1, W: 2, Y: 3, B: 4, O: 5, D: 6, L: 7 };
+  // Palette: 0=transparent, 1=outline, 2=white, 3=yellow, 4=brown,
+  //          5=light orange, 6=dim, 7=cream, 8=power-up red, 9=power-up green
+  const PALETTE = ['transparent', '#1a0e07', '#fff', '#fc3', '#a82', '#fa3', '#852', '#fff7c0', '#d23', '#3b6'];
+  const CHAR_MAP = { '.': 0, K: 1, W: 2, Y: 3, B: 4, O: 5, D: 6, L: 7, R: 8, G: 9 };
 
   function r(str, width) {
     const w = width || 16;
@@ -201,6 +211,47 @@
     ]),
   ];
 
+  // Power-up — a mushroom-style item: red cap with cream spots, white stem.
+  // Original design: 16×16, 2-frame pulse via dark-spot rotation.
+  const SPRITES_POWERUP = [
+    flat([
+      r('................'),
+      r('................'),
+      r('....KKKKKKKK....'),
+      r('...KRRRRRRRRK...'),
+      r('..KRLLLRRLLLRK..'),
+      r('..KRLLRRRRLLRK..'),
+      r('..KRLLRRRRLLRK..'),
+      r('..KRLLLRRLLLRK..'),
+      r('..KRRRRRRRRRRK..'),
+      r('..KKKKKKKKKKKK..'),
+      r('...KWWWWWWWWK...'),
+      r('....KWWWWWWK....'),
+      r('....KWWWWWWK....'),
+      r('....KWWWWWWK....'),
+      r('....KKKKKKKK....'),
+      r('................'),
+    ]),
+    flat([
+      r('................'),
+      r('................'),
+      r('....KKKKKKKK....'),
+      r('...KRRRRRRRRK...'),
+      r('..KRRLLLLLLRRK..'),
+      r('..KRLLLRRLLLRK..'),
+      r('..KRLLLRRLLLRK..'),
+      r('..KRRLLLLLLRRK..'),
+      r('..KRRRRRRRRRRK..'),
+      r('..KKKKKKKKKKKK..'),
+      r('...KWWWWWWWWK...'),
+      r('....KWWWWWWK....'),
+      r('....KWWWWWWK....'),
+      r('....KWWWWWWK....'),
+      r('....KKKKKKKK....'),
+      r('................'),
+    ]),
+  ];
+
   function drawSprite16(ctx, frame, dx, dy) {
     for (let py = 0; py < 16; py++) {
       for (let px = 0; px < 16; px++) {
@@ -211,6 +262,11 @@
         ctx.fillRect(dx + px, dy + py, 1, 1);
       }
     }
+  }
+
+  function drawPowerup(ctx, sx, sy, e) {
+    const frame = SPRITES_POWERUP[e.animFrame % SPRITES_POWERUP.length] || SPRITES_POWERUP[0];
+    drawSprite16(ctx, frame, sx, sy);
   }
 
   function drawCoin(ctx, sx, sy, e) {
@@ -258,6 +314,20 @@
       draw: drawMystery,
     };
   }
+  function makePowerupSlot() {
+    return {
+      active: false,
+      type: TYPE_POWERUP,
+      x: 0, y: 0,
+      w: 16, h: 16,
+      vy: 0,
+      floatTimer: 0,
+      collectable: false,
+      animFrame: 0,
+      animTimer: 0,
+      draw: drawPowerup,
+    };
+  }
 
   function createItems(config) {
     const cfg = Object.assign({}, DEFAULTS, config || {});
@@ -268,6 +338,10 @@
     for (let i = 0; i < cfg.coinCapacity; i++) coins[i] = makeCoinSlot();
     const mysteries = new Array(cfg.mysteryCapacity);
     for (let i = 0; i < cfg.mysteryCapacity; i++) mysteries[i] = makeMysterySlot();
+    const powerups = new Array(cfg.powerupCapacity);
+    for (let i = 0; i < cfg.powerupCapacity; i++) powerups[i] = makePowerupSlot();
+
+    let mysteryHitCount = 0;
 
     // Fast index from (tx, ty) → mystery slot, for tileAt() solidity check.
     const mysteryByTile = new Map();
@@ -290,6 +364,37 @@
       slot.isPopup = !!(opts && opts.isPopup);
       slot.popupTimer = slot.isPopup ? cfg.popupLifetimeFrames : 0;
       return slot;
+    }
+
+    function spawnPowerup(x, y, opts) {
+      const slot = findFree(powerups);
+      if (!slot) return null;
+      slot.active = true;
+      slot.x = x;
+      slot.y = y;
+      slot.vy = -cfg.powerupRiseSpeed;
+      slot.floatTimer = (opts && opts.floatFrames) || cfg.powerupFloatFrames;
+      slot.collectable = false;
+      slot.animFrame = 0;
+      slot.animTimer = 0;
+      return slot;
+    }
+
+    // Public for tests: apply / remove powered state on a player entity.
+    // Symmetric: grow keeps feet on ground (y up by 8), revert lowers it.
+    function applyPowerup(player) {
+      if (!player || player.powered) return;
+      player.powered = true;
+      player.w = cfg.poweredSize;
+      player.h = cfg.poweredSize;
+      player.y -= (cfg.poweredSize - cfg.normalSize);
+    }
+    function removePowerup(player) {
+      if (!player || !player.powered) return;
+      player.powered = false;
+      player.w = cfg.normalSize;
+      player.h = cfg.normalSize;
+      player.y += (cfg.poweredSize - cfg.normalSize);
     }
 
     function spawnMystery(x, y, opts) {
@@ -334,8 +439,10 @@
     }
 
     // Called from collision.step's onCeiling callback. When a mystery block
-    // is the ceiling that was hit, spend it: spawn a popup coin one tile up
-    // and flip used=true. Subsequent hits on the same tile are no-ops.
+    // is the ceiling that was hit, spend it: spawn either a popup coin
+    // (most of the time) or a power-up (every mysteryHitInterval-th hit
+    // across the whole pool). The block flips to used and subsequent hits
+    // on the same tile are no-ops regardless.
     function onCeilingHit(entity, info) {
       if (!info) return null;
       const m = mysteryByTile.get(tileKey(info.tx, info.ty));
@@ -343,9 +450,14 @@
       m.used = true;
       m.animFrame = 0;
       m.animTimer = 0;
-      // Popup coin sits one tile up from the block, auto-collected by update.
+      mysteryHitCount++;
+      const isPowerupHit = (mysteryHitCount % cfg.mysteryHitInterval) === 0;
+      if (isPowerupHit) {
+        const power = spawnPowerup(m.x, m.y - cfg.tileSize);
+        return { mystery: m, powerup: power, popup: null };
+      }
       const popup = spawnCoin(m.x, m.y - cfg.tileSize, { isPopup: true, vy: -cfg.popupRiseSpeed });
-      return { mystery: m, popup: popup };
+      return { mystery: m, popup: popup, powerup: null };
     }
 
     function collectCoin(coin, player, onCoinCollected) {
@@ -399,13 +511,41 @@
         if (!m.active || m.used) continue;
         advanceAnim(m, cfg.mysteryFrameInterval, SPRITES_MYSTERY_UNUSED.length);
       }
+
+      // Power-ups: rise during float window, become collectible, AABB-test
+      // vs player. Collection applies the powered state.
+      for (let i = 0; i < powerups.length; i++) {
+        const p = powerups[i];
+        if (!p.active) continue;
+        advanceAnim(p, cfg.powerupAnimInterval, SPRITES_POWERUP.length);
+        if (p.floatTimer > 0) {
+          p.floatTimer--;
+          p.y += p.vy;
+        } else {
+          // Settled — collectable. Slow drift to zero.
+          p.vy = 0;
+          p.collectable = true;
+        }
+        if (p.collectable && player && aabbHit(p, player)) {
+          p.active = false;
+          applyPowerup(player);
+          if (typeof c.onPowerupCollected === 'function') c.onPowerupCollected(player, p);
+        }
+      }
     }
 
     function getActive() {
       const out = [];
       for (let i = 0; i < mysteries.length; i++) if (mysteries[i].active) out.push(mysteries[i]);
+      for (let i = 0; i < powerups.length; i++) if (powerups[i].active) out.push(powerups[i]);
       for (let i = 0; i < coins.length; i++) if (coins[i].active) out.push(coins[i]);
       return out;
+    }
+
+    function activePowerupCount() {
+      let n = 0;
+      for (let i = 0; i < powerups.length; i++) if (powerups[i].active) n++;
+      return n;
     }
 
     function activeCoinCount() {
@@ -451,6 +591,9 @@
     return {
       spawnCoin: spawnCoin,
       spawnMystery: spawnMystery,
+      spawnPowerup: spawnPowerup,
+      applyPowerup: applyPowerup,
+      removePowerup: removePowerup,
       despawn: despawn,
       update: update,
       onCeilingHit: onCeilingHit,
@@ -461,15 +604,20 @@
       getActive: getActive,
       activeCoinCount: activeCoinCount,
       activeMysteryCount: activeMysteryCount,
+      activePowerupCount: activePowerupCount,
       coinCapacity: function () { return coins.length; },
       mysteryCapacity: function () { return mysteries.length; },
+      powerupCapacity: function () { return powerups.length; },
       // Test hooks
       _coins: coins,
       _mysteries: mysteries,
+      _powerups: powerups,
+      _mysteryHitCount: function () { return mysteryHitCount; },
       constants: Object.freeze(Object.assign({}, cfg)),
       SPRITES_COIN: SPRITES_COIN,
       SPRITES_MYSTERY_UNUSED: SPRITES_MYSTERY_UNUSED,
       SPRITES_MYSTERY_USED: SPRITES_MYSTERY_USED,
+      SPRITES_POWERUP: SPRITES_POWERUP,
     };
   }
 
@@ -477,12 +625,15 @@
     createItems: createItems,
     drawCoin: drawCoin,
     drawMystery: drawMystery,
+    drawPowerup: drawPowerup,
     SPRITES_COIN: SPRITES_COIN,
     SPRITES_MYSTERY_UNUSED: SPRITES_MYSTERY_UNUSED,
     SPRITES_MYSTERY_USED: SPRITES_MYSTERY_USED,
+    SPRITES_POWERUP: SPRITES_POWERUP,
     DEFAULTS: DEFAULTS,
     TYPE_COIN: TYPE_COIN,
     TYPE_MYSTERY: TYPE_MYSTERY,
+    TYPE_POWERUP: TYPE_POWERUP,
     SPAWN_CHAR_COIN: SPAWN_CHAR_COIN,
     SPAWN_CHAR_MYSTERY: SPAWN_CHAR_MYSTERY,
   };
