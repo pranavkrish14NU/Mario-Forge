@@ -37,6 +37,7 @@
   <script src="src/camera.js"></script>
   <script src="src/enemy.js"></script>
   <script src="src/items.js"></script>
+  <script src="src/combat.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/game.js"></script>
   <script>
@@ -63,6 +64,7 @@
       items.spawnAllFromTilemap(tilemap);
       // Compose mystery-block solidity with the static tilemap.
       const combinedTileAt = items.combineTileQuery(tilemap);
+      const combat = window.CombatModule.createCombat({});
       // Two parallax background layers stacked behind the foreground.
       const skyBlue = '#5cd';
       const renderer = window.RendererModule.createRenderer({
@@ -148,10 +150,16 @@
             viewport: { width: canvas.width, height: canvas.height },
           });
           items.update({ player: player });
+          combat.update({
+            player: player,
+            pool: enemies,
+            stateManager: stateManager,
+          });
         },
         render: function () {
           renderer.render({
-            player: player,
+            // Skip player render during invincibility flash for visual feedback.
+            player: player.visible === false ? null : player,
             entities: enemies.getActive().concat(items.getActive()),
             hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
           });
