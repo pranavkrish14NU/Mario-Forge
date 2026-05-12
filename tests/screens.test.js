@@ -6,8 +6,10 @@ const {
   createPauseScreen,
   createGameOverScreen,
   createVictoryScreen,
+  createControlsScreen,
   formatTime,
   DEFAULTS,
+  DEFAULT_REMAPPABLE_ACTIONS,
 } = require('../src/screens.js');
 
 // ---------- mock ctx ----------
@@ -318,4 +320,198 @@ test('pause without getUnderlay still renders correctly (solid background fallba
   sc.render(ctx);
   // Background fill present + PAUSED text.
   assert.ok(ctx._calls.some(c => c.op === 'fillText' && /PAUSED/.test(c.text)));
+});
+
+// ----------------------------------------------------------------------
+// WO-022 controls screen
+// ----------------------------------------------------------------------
+
+function makeStubA11y(opts) {
+  const o = opts || {};
+  let remapping = false;
+  let remapAction = null;
+  const bindings = o.bindings || { jump: ' ', moveLeft: 'ArrowLeft' };
+  return {
+    beginRemap: function (a) { remapping = true; remapAction = a; },
+    cancelRemap: function () { const x = remapAction; remapping = false; remapAction = null; return x; },
+    isRemapping: function () { return remapping; },
+    getRemapAction: function () { return remapAction; },
+    getKeyForAction: function (a) { return bindings[a] || null; },
+    describeKey: function (k) { return k === ' ' ? 'Space' : (k.length === 1 ? k.toUpperCase() : k); },
+  };
+}
+
+test('createControlsScreen requires width and height', () => {
+  assert.throws(() => createControlsScreen({}), TypeError);
+});
+
+test('DEFAULT_REMAPPABLE_ACTIONS exposes core gameplay actions', () => {
+  assert.ok(Array.isArray(DEFAULT_REMAPPABLE_ACTIONS));
+  const actions = DEFAULT_REMAPPABLE_ACTIONS.map(a => a.action);
+  assert.ok(actions.indexOf('jump') !== -1);
+  assert.ok(actions.indexOf('moveLeft') !== -1);
+  assert.ok(actions.indexOf('moveRight') !== -1);
+  assert.ok(actions.indexOf('pause') !== -1);
+  assert.ok(actions.indexOf('confirm') !== -1);
+});
+
+test('AC4: controls screen renders title + each remappable action with current key', () => {
+  const ctx = makeMockCtx();
+  const a11y = makeStubA11y({ bindings: { jump: ' ', moveLeft: 'ArrowLeft' } });
+  const sc = createControlsScreen({
+    width: W, height: H,
+    input: makeInput(),
+    a11y: a11y,
+    actions: [
+      { action: 'jump', label: 'JUMP' },
+      { action: 'moveLeft', label: 'MOVE LEFT' },
+    ],
+  });
+  sc.enter();
+  sc.render(ctx);
+  const texts = ctx._calls.filter(c => c.op === 'fillText').map(c => c.text);
+  assert.ok(texts.some(t => /CONTROLS/.test(t)), 'expected CONTROLS title');
+  assert.ok(texts.some(t => /JUMP/.test(t) && /Space/.test(t)), 'expected JUMP row with Space binding');
+  assert.ok(texts.some(t => /MOVE LEFT/.test(t) && /ArrowLeft/.test(t)),
+    'expected MOVE LEFT row with ArrowLeft binding');
+});
+
+test('AC7: controls screen navigates with moveUp/moveDown', () => {
+  const a11y = makeStubA11y();
+  const inputDown = makeInput(['moveDown']);
+  const sc = createControlsScreen({
+    width: W, height: H, input: inputDown, a11y: a11y,
+  });
+  sc.enter();
+  assert.equal(sc._selectedIndex(), 0);
+  sc.update(0);
+  assert.equal(sc._selectedIndex(), 1);
+});
+
+test('AC7: navigation wraps around the action list', () => {
+  const a11y = makeStubA11y();
+  const inputUp = makeInput(['moveUp']);
+  const sc = createControlsScreen({
+    width: W, height: H, input: inputUp, a11y: a11y,
+    actions: [{ action: 'a', label: 'A' }, { action: 'b', label: 'B' }, { action: 'c', label: 'C' }],
+  });
+  sc.enter();
+  assert.equal(sc._selectedIndex(), 0);
+  sc.update(0); // wraps to last item
+  assert.equal(sc._selectedIndex(), 2);
+});
+
+test('AC4: confirm on a row calls a11y.beginRemap with that action', () => {
+  const a11y = makeStubA11y();
+  const sc = createControlsScreen({
+    width: W, height: H,
+    input: makeInput(['confirm']),
+    a11y: a11y,
+    actions: [{ action: 'jump', label: 'JUMP' }],
+  });
+  sc.enter();
+  sc.update(0);
+  assert.equal(a11y.isRemapping(), true);
+  assert.equal(a11y.getRemapAction(), 'jump');
+});
+
+test('AC4: navigation is suspended while a remap capture is in progress', () => {
+  const a11y = makeStubA11y();
+  a11y.beginRemap('jump'); // pretend capture already started
+  const sc = createControlsScreen({
+    width: W, height: H,
+    input: makeInput(['moveDown']),
+    a11y: a11y,
+  });
+  sc.enter();
+  sc.update(0);
+  // Index should not change because update() short-circuits while remapping.
+  assert.equal(sc._selectedIndex(), 0);
+});
+
+test('handleEscape cancels an active remap', () => {
+  const a11y = makeStubA11y();
+  a11y.beginRemap('jump');
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+  });
+  const result = sc.handleEscape();
+  assert.equal(result, 'cancelled-remap');
+  assert.equal(a11y.isRemapping(), false);
+});
+
+test('handleEscape with no active remap fires onExit transition', () => {
+  let exited = false;
+  const a11y = makeStubA11y();
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+    transitions: { onExit: function () { exited = true; } },
+  });
+  const result = sc.handleEscape();
+  assert.equal(result, 'exited');
+  assert.equal(exited, true);
+});
+
+test('handleEscape without onExit returns "ignored"', () => {
+  const a11y = makeStubA11y();
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+  });
+  assert.equal(sc.handleEscape(), 'ignored');
+});
+
+test('AC4: render highlights the row currently being remapped with [PRESS ANY KEY]', () => {
+  const a11y = makeStubA11y();
+  a11y.beginRemap('jump');
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+    actions: [{ action: 'jump', label: 'JUMP' }],
+  });
+  sc.enter();
+  // Render a handful of frames so we cross at least one blink.
+  let sawPrompt = false;
+  for (let i = 0; i < 50; i++) {
+    const ctx = makeMockCtx();
+    sc.update(0);
+    sc.render(ctx);
+    const texts = ctx._calls.filter(c => c.op === 'fillText').map(c => c.text);
+    if (texts.some(t => /PRESS ANY KEY/.test(t))) { sawPrompt = true; break; }
+  }
+  assert.ok(sawPrompt, 'expected [PRESS ANY KEY] prompt on remapping row');
+});
+
+test('controls exit() aborts an in-progress remap', () => {
+  const a11y = makeStubA11y();
+  a11y.beginRemap('jump');
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+  });
+  sc.exit();
+  assert.equal(a11y.isRemapping(), false);
+});
+
+test('controls screen tolerates missing a11y instance', () => {
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(['confirm']),
+  });
+  sc.enter();
+  // Should not throw even though confirm would normally call beginRemap.
+  sc.update(0);
+});
+
+test('controls render uses configured palette colours', () => {
+  const ctx = makeMockCtx();
+  const a11y = makeStubA11y();
+  const sc = createControlsScreen({
+    width: W, height: H, input: makeInput(), a11y: a11y,
+    bgColor: '#000', titleColor: '#ff0', bodyColor: '#fff', promptColor: '#0ff',
+    actions: [{ action: 'jump', label: 'JUMP' }],
+  });
+  sc.enter();
+  sc.render(ctx);
+  const bgFill = ctx._calls.find(c => c.op === 'fillRect' && c.fs === '#000');
+  assert.ok(bgFill, 'expected high-contrast background fill');
+  const titleCall = ctx._calls.find(c => c.op === 'fillText' && /CONTROLS/.test(c.text));
+  assert.ok(titleCall);
+  assert.equal(titleCall.fs, '#ff0');
 });

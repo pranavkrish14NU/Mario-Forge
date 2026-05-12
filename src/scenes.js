@@ -55,12 +55,13 @@
   // scenes because the two are tightly coupled — adding a new scene means
   // declaring its valid neighbors here.
   const DEFAULT_TRANSITIONS = Object.freeze({
-    title: ['playing'],
+    title: ['playing', 'controls'],
     playing: ['paused', 'gameOver', 'victory', 'levelTransition'],
-    paused: ['playing', 'title'],
+    paused: ['playing', 'title', 'controls'],
     levelTransition: ['playing', 'victory'],
     gameOver: ['title'],
     victory: ['title'],
+    controls: ['title', 'paused'],
   });
 
   const api = {

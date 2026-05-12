@@ -29,9 +29,24 @@
   </style>
 </head>
 <body>
-  <canvas id="game" width="512" height="208" aria-label="Mario-Forge game canvas"></canvas>
+  <!--
+    WO-022 accessibility surface:
+      - tabIndex=0 lets keyboard users focus the canvas. role="application"
+        signals to AT that arrow keys are intercepted (not page-scroll).
+      - #game-instructions is a visually-hidden description read on focus.
+      - #aria-live is created at runtime by src/a11y.js so the polite
+        region only ships with the WCAG layer wired in.
+  -->
+  <canvas id="game" width="512" height="208"
+          tabindex="0"
+          role="application"
+          aria-label="Mario-Forge game canvas"
+          aria-describedby="game-instructions"></canvas>
+  <div id="game-instructions" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
+    Use arrow keys or WASD to move, Space to jump, Shift to run, P to pause, Enter to confirm, H to toggle high contrast, C to open controls.
+  </div>
   <div class="hud">
-    <b>Arrow / WASD</b> move &nbsp;|&nbsp; <b>Shift</b> run &nbsp;|&nbsp; <b>Space</b> jump &nbsp;|&nbsp; <b>P</b> pause &nbsp;|&nbsp; <b>Enter</b> start
+    <b>Arrow / WASD</b> move &nbsp;|&nbsp; <b>Shift</b> run &nbsp;|&nbsp; <b>Space</b> jump &nbsp;|&nbsp; <b>P</b> pause &nbsp;|&nbsp; <b>Enter</b> start &nbsp;|&nbsp; <b>H</b> high contrast &nbsp;|&nbsp; <b>C</b> controls
   </div>
 
   <script src="src/state-manager.js"></script>
@@ -50,6 +65,7 @@
   <script src="src/levels.js"></script>
   <script src="src/screens.js"></script>
   <script src="src/viewport.js"></script>
+  <script src="src/a11y.js"></script>
   <script src="src/game.js"></script>
   <script>
     (function () {
@@ -76,6 +92,19 @@
       const playerCtl = window.PlayerModule.createPlayerController({ input: input });
       const combat = window.CombatModule.createCombat({});
 
+      // WCAG 2.1 AA layer (WO-022). Created early so palette + reduced-motion
+      // flags are available when we build the renderer / screens below.
+      const a11y = window.A11yModule.createA11y({ input: input });
+      // Canvas was statically marked role=application + aria-label above; the
+      // applyCanvasAria call refreshes attributes in case future code clobbers
+      // them and ensures tabIndex is set programmatically for browsers that
+      // ignore the HTML tabindex attribute on canvas.
+      a11y.applyCanvasAria(canvas, {
+        role: 'application',
+        label: 'Mario-Forge game canvas',
+        describedBy: 'game-instructions',
+      });
+
       // World refs — re-built on level change. Wrapped in a single mutable
       // container so the playing scene closure always reads the current set.
       const world = {
@@ -87,6 +116,54 @@
         renderer: null,
         combinedTileAt: null,
       };
+
+      // Build a backgrounds[] array for the renderer. Reduced motion (WO-022
+      // AC6) zeros the parallax factor on the distant + mid layers so they
+      // sit static behind the foreground — the hills still draw, but they
+      // don't scroll relative to the camera. High contrast (WO-022 AC3)
+      // pulls colours from a11y.getPalette().tile so the sky / hills match
+      // the rest of the high-contrast scheme.
+      function makeBackgrounds() {
+        const p = a11y.getPalette().tile;
+        const rm = a11y.isReducedMotion();
+        const farFactor = rm ? 0 : 0.3;
+        const nearFactor = rm ? 0 : 0.6;
+        // Hill colours: in normal mode the muted greens; in high contrast
+        // a fully-saturated cyan/yellow pair so they read against black.
+        const farFill = a11y.isHighContrast() ? '#0ff' : '#7a8';
+        const nearFill = a11y.isHighContrast() ? '#ff0' : '#5a7';
+        return [
+          { factor: 0, color: p.sky },
+          { factor: farFactor, draw: function (c, off) {
+            c.fillStyle = farFill;
+            for (var i = -1; i < 9; i++) {
+              var cx = i * 64 - (off.x % 64);
+              c.fillRect(cx, canvas.height - 80, 64, 40);
+            }
+          } },
+          { factor: nearFactor, draw: function (c, off) {
+            c.fillStyle = nearFill;
+            for (var i = -1; i < 9; i++) {
+              var cx = i * 96 - (off.x % 96);
+              c.fillRect(cx, canvas.height - 56, 96, 24);
+            }
+          } },
+        ];
+      }
+
+      // High-contrast player override (WO-022 AC3). The default drawPlayer
+      // uses a multi-colour palette baked into player.js — fine on the
+      // default sky background but indistinguishable on the black HC bg.
+      // The override paints a solid yellow silhouette (≥ 19:1 contrast on
+      // black) sized to the player's current bounding box.
+      function drawPlayerHighContrast(c, p) {
+        c.fillStyle = '#ff0';
+        c.fillRect(Math.round(p.x), Math.round(p.y), p.w, p.h);
+        // Eye dot in black so the silhouette has a recognisable feature.
+        c.fillStyle = '#000';
+        const eyeX = (p.facing === 'left' ? 3 : (p.w - 5));
+        c.fillRect(Math.round(p.x) + eyeX, Math.round(p.y) + 4, 2, 2);
+      }
 
       function setupWorld(mapRows) {
         world.tilemap = window.TilemapModule.createTilemap({ tileSize: 16, map: mapRows });
@@ -107,23 +184,9 @@
           viewport: { width: canvas.width, height: canvas.height },
           camera: world.camera,
           tilemap: world.tilemap,
-          backgrounds: [
-            { factor: 0, color: '#5cd' },
-            { factor: 0.3, draw: function (c, off) {
-              c.fillStyle = '#7a8';
-              for (var i = -1; i < 9; i++) {
-                var cx = i * 64 - (off.x % 64);
-                c.fillRect(cx, canvas.height - 80, 64, 40);
-              }
-            } },
-            { factor: 0.6, draw: function (c, off) {
-              c.fillStyle = '#5a7';
-              for (var i = -1; i < 9; i++) {
-                var cx = i * 96 - (off.x % 96);
-                c.fillRect(cx, canvas.height - 56, 96, 24);
-              }
-            } },
-          ],
+          palette: a11y.getPalette().tile,
+          backgrounds: makeBackgrounds(),
+          drawPlayer: a11y.isHighContrast() ? drawPlayerHighContrast : window.PlayerModule.drawPlayer,
         });
       }
 
@@ -134,41 +197,6 @@
       function items() { return world.items; }
       function hazards() { return world.hazards; }
       function renderer() { return world.renderer; }
-      // Two parallax background layers stacked behind the foreground.
-      const skyBlue = '#5cd';
-      const renderer = window.RendererModule.createRenderer({
-        ctx: ctx,
-        viewport: { width: canvas.width, height: canvas.height },
-        camera: camera,
-        tilemap: tilemap,
-        backgrounds: [
-          // Locked sky.
-          { factor: 0, color: skyBlue },
-          // Distant hills (factor 0.3) — scrolls slowly.
-          {
-            factor: 0.3,
-            draw: function (c, off) {
-              c.fillStyle = '#7a8';
-              for (var i = -1; i < 9; i++) {
-                var cx = i * 64 - (off.x % 64);
-                c.beginPath && c.beginPath();
-                c.fillRect(cx, canvas.height - 80, 64, 40);
-              }
-            },
-          },
-          // Mid-ground hills (factor 0.6) — scrolls faster.
-          {
-            factor: 0.6,
-            draw: function (c, off) {
-              c.fillStyle = '#5a7';
-              for (var i = -1; i < 9; i++) {
-                var cx = i * 96 - (off.x % 96);
-                c.fillRect(cx, canvas.height - 56, 96, 24);
-              }
-            },
-          },
-        ],
-      });
 
       // Light gravity used inside the playing scene (the standalone Physics
       // module is unit-tested separately; the integration spike uses a tiny
@@ -185,12 +213,24 @@
         height: canvas.height,
       });
 
+      // Accessibility tracking: previous-frame snapshots used to detect
+      // score milestones (every 500) and damage events (lives drop) so we
+      // can fire the corresponding ARIA live-region announcements (WO-022
+      // AC1). Score is bucketed by Math.floor(score / 500) so we announce
+      // once per crossing rather than every frame.
+      const a11yTrack = { lastScore: 0, lastLives: 3, lastScoreBucket: 0 };
+
       const playingScene = {
         enter: function () {
           console.log('[Scene] enter: playing');
           // Snap camera to the player's current location (set by setupWorld
           // or resetGameWorld). Avoids the lerp jump on level entry.
           camera().snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
+          // Sync the a11y trackers so an entering scene does not falsely
+          // announce a "damage" event when lives were reset off-screen.
+          a11yTrack.lastScore = player.score;
+          a11yTrack.lastLives = player.lives;
+          a11yTrack.lastScoreBucket = Math.floor((player.score || 0) / 500);
         },
         exit: function () { console.log('[Scene] exit: playing'); },
         update: function () {
@@ -226,6 +266,19 @@
               p.vx = 0; p.vy = 0;
             },
           });
+          // ---- Accessibility announcements (WO-022 AC1) ----
+          // Damage: lives decremented this frame.
+          if (player.lives < a11yTrack.lastLives) {
+            a11y.announceDamage(player.lives);
+          }
+          a11yTrack.lastLives = player.lives;
+          // Score milestones: every 500-point bucket crossing.
+          const bucket = Math.floor((player.score || 0) / 500);
+          if (bucket > a11yTrack.lastScoreBucket && player.score > 0) {
+            a11y.announceScoreMilestone(bucket * 500);
+          }
+          a11yTrack.lastScoreBucket = bucket;
+          a11yTrack.lastScore = player.score;
           // Goal contact triggers level transition.
           if (levelManager.goalContact(player, tilemap()) && !levelManager.isTransitioning()) {
             levelManager.reachGoal();
@@ -256,7 +309,7 @@
 
       const levelManager = window.LevelsModule.createLevelManager({
         tileSize: 16,
-        onLoadLevel: function (level /*, idx */) {
+        onLoadLevel: function (level, idx) {
           setupWorld(level.map);
           const spawn = levelManager.getSpawnPosition();
           player.x = spawn.x; player.y = spawn.y;
@@ -264,6 +317,11 @@
           player.onGround = false;
           player.powered = false; player.w = 16; player.h = 16; player.visible = true;
           combat.reset();
+          // WO-022 AC1: announce the new level to the live region. Index
+          // may arrive as undefined from older paths; default to the
+          // manager's own currentIndex().
+          const i = (typeof idx === 'number') ? idx : levelManager.currentIndex();
+          a11y.announceLevelStart(i, level && level.name);
         },
         onVictory: function () { stateManager.changeScene('victory'); },
       });
@@ -279,65 +337,116 @@
       const initialSpawn = levelManager.getSpawnPosition();
       player.x = initialSpawn.x; player.y = initialSpawn.y;
 
-      // WO-015 screens — replace the placeholder scenes from WO-002.
-      const titleScene = window.ScreensModule.createTitleScreen({
-        width: canvas.width, height: canvas.height,
-        input: input,
-        transitions: { onStart: function () { resetGameWorld(); stateManager.changeScene('playing'); } },
-      });
-      const pauseScene = window.ScreensModule.createPauseScreen({
-        width: canvas.width, height: canvas.height,
-        input: input,
-        getUnderlay: function () { return playingScene; },
-        transitions: {
-          onResume: function () { stateManager.changeScene('playing'); },
-          onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); },
-        },
-      });
-      const gameOverScene = window.ScreensModule.createGameOverScreen({
-        width: canvas.width, height: canvas.height,
-        input: input,
-        getScore: function () { return player.score; },
-        transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
-      });
-      const victoryScene = window.ScreensModule.createVictoryScreen({
-        width: canvas.width, height: canvas.height,
-        input: input,
-        getScore: function () { return player.score; },
-        getTime: function () { return (Date.now() - gameState.startTimeMs) / 1000; },
-        transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
-      });
+      // Track which scene the controls screen was opened FROM so Escape
+      // can return there (title <-> controls, paused <-> controls).
+      var controlsReturnTo = 'title';
 
-      const levelTransitionScene = window.ScreensModule.createLevelTransitionScreen({
-        width: canvas.width, height: canvas.height,
-        durationFrames: 120,
-        getLevelIndex: function () {
-          // Index AFTER the upcoming advance — the title we'll show is the next level.
-          return Math.min(levelManager.currentIndex() + 1, levelManager.totalLevels() - 1);
-        },
-        getLevelName: function () {
-          return levelManager.nextLevelName() || levelManager.currentLevel().name;
-        },
-        transitions: {
-          onComplete: function () {
-            levelManager.completeTransition();
-            // If we completed into victory, onVictory in the manager already
-            // switched scenes. Otherwise drop back into playing.
-            if (stateManager.getCurrentSceneName() === 'levelTransition') {
-              stateManager.changeScene('playing');
-            }
+      // ---- Scene builders ------------------------------------------------
+      // All UI scenes are rebuilt whenever the a11y palette flips so the
+      // high-contrast colours propagate without leaking palette state into
+      // each screen factory. Pause's selectedIndex resets on enter() which
+      // happens after rebuild → acceptable UX cost for a rare toggle.
+      var titleScene, pauseScene, gameOverScene, victoryScene,
+          levelTransitionScene, controlsScene;
+
+      function buildScenes() {
+        const screen = a11y.getPalette().screen;
+        // Under reduced motion (WO-022 AC6: "sprite animations use fewer
+        // frames") flatten the pulsing prompts. A pulse interval >> frame
+        // budget makes the prompt effectively static.
+        const rm = a11y.isReducedMotion();
+        const screenColors = {
+          bgColor: screen.bgColor,
+          titleColor: screen.titleColor,
+          bodyColor: screen.bodyColor,
+          promptColor: screen.promptColor,
+          overlayColor: screen.overlayColor,
+          pulseInterval: rm ? 1e9 : 30,
+          menuPulseInterval: rm ? 1e9 : 20,
+        };
+        titleScene = window.ScreensModule.createTitleScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          input: input,
+          transitions: { onStart: function () { resetGameWorld(); stateManager.changeScene('playing'); } },
+        }, screenColors));
+        pauseScene = window.ScreensModule.createPauseScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          input: input,
+          getUnderlay: function () { return playingScene; },
+          transitions: {
+            onResume: function () { stateManager.changeScene('playing'); },
+            onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); },
           },
-        },
+        }, screenColors));
+        gameOverScene = window.ScreensModule.createGameOverScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          input: input,
+          getScore: function () { return player.score; },
+          transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
+        }, screenColors));
+        victoryScene = window.ScreensModule.createVictoryScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          input: input,
+          getScore: function () { return player.score; },
+          getTime: function () { return (Date.now() - gameState.startTimeMs) / 1000; },
+          transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
+        }, screenColors));
+        levelTransitionScene = window.ScreensModule.createLevelTransitionScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          durationFrames: a11y.isReducedMotion() ? 1 : 120,
+          getLevelIndex: function () {
+            return Math.min(levelManager.currentIndex() + 1, levelManager.totalLevels() - 1);
+          },
+          getLevelName: function () {
+            return levelManager.nextLevelName() || levelManager.currentLevel().name;
+          },
+          transitions: {
+            onComplete: function () {
+              levelManager.completeTransition();
+              if (stateManager.getCurrentSceneName() === 'levelTransition') {
+                stateManager.changeScene('playing');
+              }
+            },
+          },
+        }, screenColors));
+        controlsScene = window.ScreensModule.createControlsScreen(Object.assign({
+          width: canvas.width, height: canvas.height,
+          input: input,
+          a11y: a11y,
+          transitions: {
+            onExit: function () { stateManager.changeScene(controlsReturnTo); },
+          },
+        }, screenColors));
+        stateManager.registerScene('title', titleScene);
+        stateManager.registerScene('playing', playingScene);
+        stateManager.registerScene('paused', pauseScene);
+        stateManager.registerScene('gameOver', gameOverScene);
+        stateManager.registerScene('victory', victoryScene);
+        stateManager.registerScene('levelTransition', levelTransitionScene);
+        stateManager.registerScene('controls', controlsScene);
+      }
+      buildScenes();
+      stateManager.changeScene('title');
+
+      // Rebuild renderer + scenes when accessibility state changes so the
+      // new palette / reduced-motion settings take effect immediately.
+      a11y.onChange(function () {
+        setupWorld(levelManager.currentLevel().map);
+        // Restore player position post-setupWorld (otherwise we'd snap to
+        // the spawn point mid-level). setupWorld only rebuilds world refs;
+        // player.x/y are preserved on the player object.
+        buildScenes();
       });
 
-      stateManager.registerScene('title', titleScene);
-      stateManager.registerScene('playing', playingScene);
-      stateManager.registerScene('paused', pauseScene);
-      stateManager.registerScene('gameOver', gameOverScene);
-      stateManager.registerScene('victory', victoryScene);
-      stateManager.registerScene('levelTransition', levelTransitionScene);
-
-      stateManager.changeScene('title');
+      // Track previous scene to fire enter-based announcements (gameOver,
+      // victory, pause/resume) without modifying each screen factory.
+      var lastScene = stateManager.getCurrentSceneName();
+      function announceSceneEntry(next) {
+        if (next === 'gameOver') a11y.announceGameOver(player.score);
+        else if (next === 'victory') a11y.announceVictory(player.score);
+        else if (next === 'paused') a11y.announcePause(true);
+        else if (next === 'playing' && lastScene === 'paused') a11y.announcePause(false);
+      }
 
       var lastTime = 0;
       function frame(t) {
@@ -345,18 +454,56 @@
         lastTime = t;
         stateManager.update(dt);
         stateManager.render(ctx);
+        const cur = stateManager.getCurrentSceneName();
+        if (cur !== lastScene) {
+          announceSceneEntry(cur);
+          lastScene = cur;
+        }
         input.update();
         requestAnimationFrame(frame);
       }
 
-      // Top-level pause toggle — P always switches between playing/paused.
+      // Top-level keydown — handles pause toggle (P), high-contrast (H),
+      // controls screen (C), Escape (back from controls / cancel remap),
+      // and the remap-capture flow for WO-022 AC4. These are wired here
+      // (not in Input) because they cross scene boundaries.
       window.addEventListener('keydown', function (e) {
         var cur = stateManager.getCurrentSceneName();
+        // Remap-capture: while a11y.isRemapping(), the next non-Escape key
+        // is bound to the active action via input.remap.
+        if (a11y.isRemapping()) {
+          if (typeof e.preventDefault === 'function') e.preventDefault();
+          a11y.captureKey(e.key);
+          return;
+        }
+        // Pause toggle.
         if (e.key === 'p' || e.key === 'P') {
           if (cur === 'playing') stateManager.changeScene('paused');
           else if (cur === 'paused') stateManager.changeScene('playing');
+          return;
+        }
+        // High-contrast toggle (PRD FR-16 shortcut: H). Allowed from any scene.
+        if (e.key === 'h' || e.key === 'H') {
+          a11y.toggleHighContrast();
+          return;
+        }
+        // Open controls screen from title or paused (PRD FR-16: accessible
+        // from title screen and pause menu). Use C as the hotkey.
+        if ((e.key === 'c' || e.key === 'C') && (cur === 'title' || cur === 'paused')) {
+          controlsReturnTo = cur;
+          stateManager.changeScene('controls');
+          return;
+        }
+        // Escape: back-out of controls (or cancel an in-progress remap).
+        if (e.key === 'Escape' && cur === 'controls') {
+          controlsScene.handleEscape();
+          return;
         }
       });
+
+      // Announce the first level once the title screen is dismissed —
+      // resetGameWorld() triggers onLoadLevel which already calls
+      // a11y.announceLevelStart, so no extra wiring is needed here.
 
       requestAnimationFrame(frame);
     })();

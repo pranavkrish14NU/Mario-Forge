@@ -235,6 +235,118 @@
     };
   }
 
+  // ---------- controls (WO-022) ----------
+  //
+  // Lists the remappable actions with their current key bindings.
+  // Up/Down arrows navigate the action list. Enter on a row enters
+  // "press-a-key" capture mode, after which the next non-Escape key
+  // press is forwarded to a11y.captureKey() which calls input.remap().
+  // Escape exits capture mode if active, otherwise closes the screen
+  // via transitions.onExit (typically returning to title or pause).
+  //
+  // The screen is presentational: capture state lives on the injected
+  // a11y instance so the screen can be rebuilt (e.g. when high-contrast
+  // toggles) without losing an in-progress remap.
+
+  const DEFAULT_REMAPPABLE_ACTIONS = Object.freeze([
+    { action: 'moveLeft',  label: 'MOVE LEFT' },
+    { action: 'moveRight', label: 'MOVE RIGHT' },
+    { action: 'moveUp',    label: 'MOVE UP' },
+    { action: 'moveDown',  label: 'MOVE DOWN' },
+    { action: 'jump',      label: 'JUMP' },
+    { action: 'run',       label: 'RUN' },
+    { action: 'pause',     label: 'PAUSE' },
+    { action: 'confirm',   label: 'CONFIRM' },
+  ]);
+
+  function createControlsScreen(config) {
+    const cfg = Object.assign({}, DEFAULTS, config || {});
+    if (!cfg.width || !cfg.height) throw new TypeError('createControlsScreen: width and height required');
+    const a11y = cfg.a11y || null;
+    const actions = (cfg.actions && cfg.actions.length) ? cfg.actions.slice() : DEFAULT_REMAPPABLE_ACTIONS.slice();
+    const transitions = cfg.transitions || {};
+    let selectedIndex = 0;
+    let frame = 0;
+
+    function enter() { selectedIndex = 0; frame = 0; }
+    function exit() {
+      // If the screen exits while a remap capture is in progress, abort it
+      // so a stray key on the next screen doesn't get bound here.
+      if (a11y && typeof a11y.isRemapping === 'function' && a11y.isRemapping()) {
+        a11y.cancelRemap();
+      }
+    }
+    function update(/* dt */) {
+      frame++;
+      const input = cfg.input;
+      if (!input) return;
+      // While remap-capture is active, swallow navigation/confirm so they
+      // don't fire menu actions — the actual key capture is wired via the
+      // top-level keydown listener in index.html which calls a11y.captureKey.
+      if (a11y && typeof a11y.isRemapping === 'function' && a11y.isRemapping()) return;
+      if (typeof input.justPressed !== 'function') return;
+      if (input.justPressed('moveUp')) {
+        selectedIndex = (selectedIndex - 1 + actions.length) % actions.length;
+      }
+      if (input.justPressed('moveDown')) {
+        selectedIndex = (selectedIndex + 1) % actions.length;
+      }
+      if (input.justPressed('confirm')) {
+        const item = actions[selectedIndex];
+        if (a11y && typeof a11y.beginRemap === 'function') {
+          a11y.beginRemap(item.action);
+        }
+      }
+    }
+    function render(ctx) {
+      fillBackground(ctx, cfg.width, cfg.height, cfg.bgColor);
+      const cx = cfg.width / 2;
+      drawCenteredText(ctx, 'CONTROLS', cx, 28, cfg.titleFont, cfg.titleColor);
+      drawCenteredText(ctx, 'Arrows: navigate    Enter: rebind    Esc: back',
+        cx, 48, cfg.bodyFont, cfg.bodyColor);
+      const blinkOn = Math.floor(frame / cfg.menuPulseInterval) % 2 === 0;
+      const baseY = 70;
+      const remapping = !!(a11y && typeof a11y.isRemapping === 'function' && a11y.isRemapping());
+      const remappingAction = remapping && typeof a11y.getRemapAction === 'function'
+        ? a11y.getRemapAction()
+        : null;
+      for (let i = 0; i < actions.length; i++) {
+        const item = actions[i];
+        const selected = (i === selectedIndex);
+        const isRemappingRow = remapping && remappingAction === item.action;
+        const prefix = (selected && (!remapping || isRemappingRow) && blinkOn) ? '>' : ' ';
+        const boundKey = (a11y && typeof a11y.getKeyForAction === 'function')
+          ? a11y.getKeyForAction(item.action) : null;
+        const keyLabel = isRemappingRow
+          ? (blinkOn ? '[PRESS ANY KEY]' : '[             ]')
+          : (boundKey ? (typeof a11y.describeKey === 'function' ? a11y.describeKey(boundKey) : boundKey) : '—');
+        const rowText = prefix + ' ' + item.label + '   ' + keyLabel;
+        const color = selected ? cfg.promptColor : cfg.bodyColor;
+        drawCenteredText(ctx, rowText, cx, baseY + i * 14, cfg.bodyFont, color);
+      }
+    }
+    // Called by the top-level keydown listener when in capture mode so the
+    // screen can show feedback / fire transitions.onExit on Escape-while-idle.
+    function handleEscape() {
+      if (a11y && typeof a11y.isRemapping === 'function' && a11y.isRemapping()) {
+        a11y.cancelRemap();
+        return 'cancelled-remap';
+      }
+      if (typeof transitions.onExit === 'function') {
+        transitions.onExit();
+        return 'exited';
+      }
+      return 'ignored';
+    }
+    return {
+      enter: enter, exit: exit, update: update, render: render,
+      handleEscape: handleEscape,
+      _selectedIndex: function () { return selectedIndex; },
+      _actions: function () { return actions.slice(); },
+      _frame: function () { return frame; },
+    };
+  }
+
   // ---------- level transition ----------
 
   function createLevelTransitionScreen(config) {
@@ -280,8 +392,10 @@
     createGameOverScreen: createGameOverScreen,
     createVictoryScreen: createVictoryScreen,
     createLevelTransitionScreen: createLevelTransitionScreen,
+    createControlsScreen: createControlsScreen,
     formatTime: formatTime,
     DEFAULTS: DEFAULTS,
+    DEFAULT_REMAPPABLE_ACTIONS: DEFAULT_REMAPPABLE_ACTIONS,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
