@@ -235,11 +235,51 @@
     };
   }
 
+  // ---------- level transition ----------
+
+  function createLevelTransitionScreen(config) {
+    const cfg = Object.assign({}, DEFAULTS, config || {});
+    if (!cfg.width || !cfg.height) throw new TypeError('createLevelTransitionScreen: width and height required');
+    const durationFrames = (typeof cfg.durationFrames === 'number') ? cfg.durationFrames : 120;
+    const transitions = cfg.transitions || {};
+    let frame = 0;
+    let completed = false;
+
+    function enter() { frame = 0; completed = false; }
+    function exit() {}
+    function update(/* dt */) {
+      frame++;
+      if (!completed && frame >= durationFrames) {
+        completed = true;
+        if (typeof transitions.onComplete === 'function') transitions.onComplete();
+      }
+    }
+    function render(ctx) {
+      fillBackground(ctx, cfg.width, cfg.height, cfg.bgColor);
+      const cx = cfg.width / 2;
+      const idx = (typeof cfg.getLevelIndex === 'function') ? cfg.getLevelIndex() : 0;
+      const name = (typeof cfg.getLevelName === 'function') ? cfg.getLevelName() : '';
+      drawCenteredText(ctx, 'LEVEL ' + (idx + 1), cx, Math.floor(cfg.height / 3),
+        cfg.titleFont, cfg.titleColor);
+      if (name) {
+        drawCenteredText(ctx, name, cx, Math.floor(cfg.height / 2),
+          cfg.subtitleFont, cfg.bodyColor);
+      }
+    }
+
+    return {
+      enter: enter, exit: exit, update: update, render: render,
+      _frame: function () { return frame; },
+      _completed: function () { return completed; },
+    };
+  }
+
   const api = {
     createTitleScreen: createTitleScreen,
     createPauseScreen: createPauseScreen,
     createGameOverScreen: createGameOverScreen,
     createVictoryScreen: createVictoryScreen,
+    createLevelTransitionScreen: createLevelTransitionScreen,
     formatTime: formatTime,
     DEFAULTS: DEFAULTS,
   };

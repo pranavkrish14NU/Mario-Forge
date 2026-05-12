@@ -40,6 +40,7 @@
   <script src="src/hazards.js"></script>
   <script src="src/combat.js"></script>
   <script src="src/renderer.js"></script>
+  <script src="src/levels.js"></script>
   <script src="src/screens.js"></script>
   <script src="src/game.js"></script>
   <script>
@@ -52,23 +53,68 @@
       // --- module wiring ---
       const input = window.InputModule.createInput({});
       const collision = window.CollisionModule.createCollision({ tileSize: 16 });
-      const tilemap = window.TilemapModule.createTilemap({ tileSize: 16 });
       const player = window.PlayerModule.createPlayer({ x: 32, y: 100 });
       const playerCtl = window.PlayerModule.createPlayerController({ input: input });
-      const camera = window.CameraModule.createCamera({
-        viewport: { width: canvas.width, height: canvas.height },
-        level: { pixelWidth: tilemap.pixelWidth, pixelHeight: tilemap.pixelHeight },
-        initial: { x: 0, y: 0 },
-      });
-      const enemies = window.EnemyModule.createEnemyPool({ tilemap: tilemap });
-      enemies.spawnAllFromTilemap(tilemap);
-      const items = window.ItemsModule.createItems({ tileSize: 16 });
-      items.spawnAllFromTilemap(tilemap);
-      const hazards = window.HazardsModule.createHazards({ tileSize: 16 });
-      hazards.spawnAllFromTilemap(tilemap);
-      // Compose mystery-block solidity with the static tilemap.
-      const combinedTileAt = items.combineTileQuery(tilemap);
       const combat = window.CombatModule.createCombat({});
+
+      // World refs — re-built on level change. Wrapped in a single mutable
+      // container so the playing scene closure always reads the current set.
+      const world = {
+        tilemap: null,
+        camera: null,
+        enemies: null,
+        items: null,
+        hazards: null,
+        renderer: null,
+        combinedTileAt: null,
+      };
+
+      function setupWorld(mapRows) {
+        world.tilemap = window.TilemapModule.createTilemap({ tileSize: 16, map: mapRows });
+        world.camera = window.CameraModule.createCamera({
+          viewport: { width: canvas.width, height: canvas.height },
+          level: { pixelWidth: world.tilemap.pixelWidth, pixelHeight: world.tilemap.pixelHeight },
+          initial: { x: 0, y: 0 },
+        });
+        world.enemies = window.EnemyModule.createEnemyPool({ tilemap: world.tilemap });
+        world.enemies.spawnAllFromTilemap(world.tilemap);
+        world.items = window.ItemsModule.createItems({ tileSize: 16 });
+        world.items.spawnAllFromTilemap(world.tilemap);
+        world.hazards = window.HazardsModule.createHazards({ tileSize: 16 });
+        world.hazards.spawnAllFromTilemap(world.tilemap);
+        world.combinedTileAt = world.items.combineTileQuery(world.tilemap);
+        world.renderer = window.RendererModule.createRenderer({
+          ctx: ctx,
+          viewport: { width: canvas.width, height: canvas.height },
+          camera: world.camera,
+          tilemap: world.tilemap,
+          backgrounds: [
+            { factor: 0, color: '#5cd' },
+            { factor: 0.3, draw: function (c, off) {
+              c.fillStyle = '#7a8';
+              for (var i = -1; i < 9; i++) {
+                var cx = i * 64 - (off.x % 64);
+                c.fillRect(cx, canvas.height - 80, 64, 40);
+              }
+            } },
+            { factor: 0.6, draw: function (c, off) {
+              c.fillStyle = '#5a7';
+              for (var i = -1; i < 9; i++) {
+                var cx = i * 96 - (off.x % 96);
+                c.fillRect(cx, canvas.height - 56, 96, 24);
+              }
+            } },
+          ],
+        });
+      }
+
+      // Convenience aliases that just deref the live world.
+      function tilemap() { return world.tilemap; }
+      function camera() { return world.camera; }
+      function enemies() { return world.enemies; }
+      function items() { return world.items; }
+      function hazards() { return world.hazards; }
+      function renderer() { return world.renderer; }
       // Two parallax background layers stacked behind the foreground.
       const skyBlue = '#5cd';
       const renderer = window.RendererModule.createRenderer({
@@ -123,72 +169,96 @@
       const playingScene = {
         enter: function () {
           console.log('[Scene] enter: playing');
-          player.x = 32; player.y = 100;
-          player.vx = 0; player.vy = 0;
-          player.onGround = false;
-          camera.snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
+          // Snap camera to the player's current location (set by setupWorld
+          // or resetGameWorld). Avoids the lerp jump on level entry.
+          camera().snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
         },
         exit: function () { console.log('[Scene] exit: playing'); },
         update: function () {
           playerCtl.update(player);
           player.vy += GRAVITY;
           if (player.vy > TERMINAL_VY) player.vy = TERMINAL_VY;
-          collision.step(player, combinedTileAt, {
-            onLand: function () { /* sound stub */ },
-            onWall: function () { /* sound stub */ },
-            onCeiling: function (entity, info) { items.onCeilingHit(entity, info); },
+          collision.step(player, world.combinedTileAt, {
+            onLand: function () {},
+            onWall: function () {},
+            onCeiling: function (entity, info) { items().onCeilingHit(entity, info); },
           });
-          // Pit-fall is handled by combat.update below (routes through the
-          // unified damage path).
-          camera.update({
+          camera().update({
             x: player.x, y: player.y, width: player.w, height: player.h,
             onGround: player.onGround,
           });
-          enemies.update({
-            cameraOffset: camera.getOffset(),
+          enemies().update({
+            cameraOffset: camera().getOffset(),
             viewport: { width: canvas.width, height: canvas.height },
           });
-          items.update({ player: player });
-          hazards.update({ player: player });
+          items().update({ player: player });
+          hazards().update({ player: player });
           combat.update({
             player: player,
-            pool: enemies,
-            items: items,
-            hazards: hazards,
-            tilemap: tilemap,
-            level: { pixelHeight: tilemap.pixelHeight },
+            pool: enemies(),
+            items: items(),
+            hazards: hazards(),
+            tilemap: tilemap(),
+            level: { pixelHeight: tilemap().pixelHeight },
             stateManager: stateManager,
             respawn: function (p) {
-              p.x = 32; p.y = 100;
+              const spawn = levelManager.getSpawnPosition();
+              p.x = spawn.x; p.y = spawn.y;
               p.vx = 0; p.vy = 0;
             },
           });
+          // Goal contact triggers level transition.
+          if (levelManager.goalContact(player, tilemap()) && !levelManager.isTransitioning()) {
+            levelManager.reachGoal();
+            stateManager.changeScene('levelTransition');
+          }
         },
         render: function () {
-          renderer.render({
-            // Skip player render during invincibility flash for visual feedback.
+          renderer().render({
             player: player.visible === false ? null : player,
-            entities: enemies.getActive()
-              .concat(items.getActive())
-              .concat(hazards.getActive()),
-            hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
+            entities: enemies().getActive()
+              .concat(items().getActive())
+              .concat(hazards().getActive()),
+            hud: {
+              score: player.score,
+              lives: player.lives,
+              levelName: levelManager.currentLevel().name,
+            },
           });
         },
       };
 
-      // Map 'R' to a custom 'restart' action used by the pause screen.
       input.remap('r', 'restart');
       input.remap('R', 'restart');
 
-      // Game-state holder (start time, etc.) — referenced by victory screen.
+      // Game-state holder. startTimeMs accumulates total play time across
+      // levels (timer keeps ticking through transitions).
       const gameState = { startTimeMs: 0, score: 0 };
+
+      const levelManager = window.LevelsModule.createLevelManager({
+        tileSize: 16,
+        onLoadLevel: function (level /*, idx */) {
+          setupWorld(level.map);
+          const spawn = levelManager.getSpawnPosition();
+          player.x = spawn.x; player.y = spawn.y;
+          player.vx = 0; player.vy = 0;
+          player.onGround = false;
+          player.powered = false; player.w = 16; player.h = 16; player.visible = true;
+          combat.reset();
+        },
+        onVictory: function () { stateManager.changeScene('victory'); },
+      });
+
       function resetGameWorld() {
-        player.x = 32; player.y = 100;
-        player.vx = 0; player.vy = 0; player.lives = 3; player.score = 0;
-        player.powered = false; player.w = 16; player.h = 16; player.visible = true;
-        combat.reset();
+        levelManager.reset(); // re-loads level 0 via onLoadLevel
+        player.lives = 3;
+        player.score = 0;
         gameState.startTimeMs = Date.now();
       }
+      // Initial world build before any state transition.
+      setupWorld(levelManager.currentLevel().map);
+      const initialSpawn = levelManager.getSpawnPosition();
+      player.x = initialSpawn.x; player.y = initialSpawn.y;
 
       // WO-015 screens — replace the placeholder scenes from WO-002.
       const titleScene = window.ScreensModule.createTitleScreen({
@@ -219,12 +289,34 @@
         transitions: { onRestart: function () { resetGameWorld(); stateManager.changeScene('title'); } },
       });
 
+      const levelTransitionScene = window.ScreensModule.createLevelTransitionScreen({
+        width: canvas.width, height: canvas.height,
+        durationFrames: 120,
+        getLevelIndex: function () {
+          // Index AFTER the upcoming advance — the title we'll show is the next level.
+          return Math.min(levelManager.currentIndex() + 1, levelManager.totalLevels() - 1);
+        },
+        getLevelName: function () {
+          return levelManager.nextLevelName() || levelManager.currentLevel().name;
+        },
+        transitions: {
+          onComplete: function () {
+            levelManager.completeTransition();
+            // If we completed into victory, onVictory in the manager already
+            // switched scenes. Otherwise drop back into playing.
+            if (stateManager.getCurrentSceneName() === 'levelTransition') {
+              stateManager.changeScene('playing');
+            }
+          },
+        },
+      });
+
       stateManager.registerScene('title', titleScene);
       stateManager.registerScene('playing', playingScene);
       stateManager.registerScene('paused', pauseScene);
       stateManager.registerScene('gameOver', gameOverScene);
       stateManager.registerScene('victory', victoryScene);
-      stateManager.registerScene('levelTransition', placeholders.levelTransition);
+      stateManager.registerScene('levelTransition', levelTransitionScene);
 
       stateManager.changeScene('title');
 
