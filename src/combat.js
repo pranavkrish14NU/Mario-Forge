@@ -130,6 +130,29 @@
       const player = c.player;
       if (!player) return;
 
+      // Hazards: spike contact and pit fall both route through the same
+      // damage path used by enemies. Powered-up state is consumed first,
+      // matching the AC for player-enemy collisions.
+      if (c.hazards) {
+        if (!isInvincible() && c.hazards.spikeContact && c.hazards.spikeContact(player, c.tilemap)) {
+          applyDamage(player, c.hooks, c.items);
+        }
+        if (!isInvincible() && c.hazards.pitFall && c.level && c.hazards.pitFall(player, c.level)) {
+          // Pit death: lose a life and respawn at the level's spawn point.
+          // The powered state is NOT a free pass for pit falls (AC2).
+          if (player.powered && c.items && typeof c.items.removePowerup === 'function') {
+            c.items.removePowerup(player);
+          }
+          player.lives = Math.max(0, (player.lives || 0) - 1);
+          state.invincibilityTimer = cfg.invincibilityFrames;
+          state.flashCounter = 0;
+          if (c.respawn && typeof c.respawn === 'function') {
+            c.respawn(player);
+          }
+          if (c.hooks && c.hooks.onPitFall) c.hooks.onPitFall(player);
+        }
+      }
+
       // Tick invincibility and flicker. Visibility is computed BEFORE the
       // counter increments so the first `flashInterval` frames after damage
       // are visible — gives the flash a clean rhythm aligned to the damage

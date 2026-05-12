@@ -37,6 +37,7 @@
   <script src="src/camera.js"></script>
   <script src="src/enemy.js"></script>
   <script src="src/items.js"></script>
+  <script src="src/hazards.js"></script>
   <script src="src/combat.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/game.js"></script>
@@ -62,6 +63,8 @@
       enemies.spawnAllFromTilemap(tilemap);
       const items = window.ItemsModule.createItems({ tileSize: 16 });
       items.spawnAllFromTilemap(tilemap);
+      const hazards = window.HazardsModule.createHazards({ tileSize: 16 });
+      hazards.spawnAllFromTilemap(tilemap);
       // Compose mystery-block solidity with the static tilemap.
       const combinedTileAt = items.combineTileQuery(tilemap);
       const combat = window.CombatModule.createCombat({});
@@ -134,13 +137,8 @@
             onWall: function () { /* sound stub */ },
             onCeiling: function (entity, info) { items.onCeilingHit(entity, info); },
           });
-          // Falling off the map — placeholder for death/respawn (WO-017).
-          if (player.y > tilemap.pixelHeight) {
-            player.x = 32; player.y = 100;
-            player.vx = 0; player.vy = 0;
-            player.lives = Math.max(0, player.lives - 1);
-            camera.snapTo({ x: player.x, y: player.y, width: player.w, height: player.h });
-          }
+          // Pit-fall is handled by combat.update below (routes through the
+          // unified damage path).
           camera.update({
             x: player.x, y: player.y, width: player.w, height: player.h,
             onGround: player.onGround,
@@ -150,18 +148,28 @@
             viewport: { width: canvas.width, height: canvas.height },
           });
           items.update({ player: player });
+          hazards.update({ player: player });
           combat.update({
             player: player,
             pool: enemies,
             items: items,
+            hazards: hazards,
+            tilemap: tilemap,
+            level: { pixelHeight: tilemap.pixelHeight },
             stateManager: stateManager,
+            respawn: function (p) {
+              p.x = 32; p.y = 100;
+              p.vx = 0; p.vy = 0;
+            },
           });
         },
         render: function () {
           renderer.render({
             // Skip player render during invincibility flash for visual feedback.
             player: player.visible === false ? null : player,
-            entities: enemies.getActive().concat(items.getActive()),
+            entities: enemies.getActive()
+              .concat(items.getActive())
+              .concat(hazards.getActive()),
             hud: { score: player.score, lives: player.lives, levelName: 'world 1-1' },
           });
         },

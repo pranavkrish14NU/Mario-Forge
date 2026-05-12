@@ -35,6 +35,8 @@
     platform: '#8a5',
     goalPole: '#fff',
     goalFlag: '#d23',
+    spike: '#bbb',
+    spikeShadow: '#666',
   });
 
   function drawTile(ctx, ch, sx, sy, tileSize, charAbove, palette) {
@@ -54,6 +56,20 @@
       ctx.fillRect(sx + 6, sy, 2, tileSize);
       ctx.fillStyle = palette.goalFlag;
       ctx.fillRect(sx + 8, sy + 1, 6, 5);
+    } else if (ch === 's') {
+      // Pointed triangles row: three peaks across the tile width.
+      const half = Math.floor(tileSize / 2);
+      ctx.fillStyle = palette.spike;
+      for (let i = 0; i < 3; i++) {
+        const baseX = sx + Math.floor((i * tileSize) / 3);
+        // Pixel-stepped triangle: bottom row wide, taper up by 1px per row.
+        for (let row = 0; row < half; row++) {
+          const inset = row;
+          ctx.fillRect(baseX + inset, sy + half + row, Math.max(1, 6 - inset * 2), 1);
+        }
+      }
+      ctx.fillStyle = palette.spikeShadow;
+      ctx.fillRect(sx, sy + tileSize - 1, tileSize, 1);
     }
   }
 
